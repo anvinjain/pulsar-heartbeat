@@ -150,6 +150,13 @@ type K8sClusterCfg struct {
 	PulsarNamespace string         `json:"pulsarNamespace"`
 	KubeConfigDir   string         `json:"kubeConfigDir"`
 	AlertPolicy     AlertPolicyCfg `json:"AlertPolicy"`
+
+	BrokerStsLabel	string			`json:"brokerStsLabel"`
+	BrokerDepLabel	string			`json:"brokerDepLabel"`
+	ProxyDepLabel	string			`json:"proxyDepLabel"`
+	ZookeeperLabel	string			`json:"zookeeperLabel"`
+	BookkeeperLabel	string			`json:"bookkeeperLabel"`
+	BkWriteQuorum	int32			`json:"bkWriteQuorum"`
 }
 
 // BrokersCfg monitors all brokers in the cluster

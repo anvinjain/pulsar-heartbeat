@@ -64,10 +64,10 @@ func EvaluateClusterHealth(client *k8s.Client) error {
 	ns := util.AssignString(k8sCfg.PulsarNamespace, k8s.DefaultPulsarNamespace)
 	// again this is for in-cluster monitoring only
 
-	if err := client.UpdateReplicas(ns); err != nil {
+	if err := client.UpdateReplicas(ns, k8sCfg); err != nil {
 		return err
 	}
-	if err := client.WatchPods(ns); err != nil {
+	if err := client.WatchPods(ns, k8sCfg); err != nil {
 		return err
 	}
 	desc, status := client.EvalHealth()
@@ -98,8 +98,7 @@ func MonitorK8sPulsarCluster() error {
 		return nil
 	}
 
-	ns := util.AssignString(k8sCfg.PulsarNamespace, k8s.DefaultPulsarNamespace)
-	clientset, err := k8s.GetK8sClient(ns)
+	clientset, err := k8s.GetK8sClient(k8sCfg)
 	if err != nil {
 		log.Errorf("failed to get k8s clientset %v or get pods under pulsar namespace", err)
 		return err
