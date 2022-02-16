@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/datastax/pulsar-heartbeat/src/k8s"
 	"golang.org/x/oauth2/clientcredentials"
 	"io/ioutil"
 	"os"
@@ -147,16 +148,10 @@ type WsConfig struct {
 // only to be enabled in-cluster monitoring
 type K8sClusterCfg struct {
 	Enabled         bool           `json:"enabled"`
-	PulsarNamespace string         `json:"pulsarNamespace"`
 	KubeConfigDir   string         `json:"kubeConfigDir"`
 	AlertPolicy     AlertPolicyCfg `json:"AlertPolicy"`
 
-	BrokerStsLabel	string			`json:"brokerStsLabel"`
-	BrokerDepLabel	string			`json:"brokerDepLabel"`
-	ProxyDepLabel	string			`json:"proxyDepLabel"`
-	ZookeeperLabel	string			`json:"zookeeperLabel"`
-	BookkeeperLabel	string			`json:"bookkeeperLabel"`
-	BkWriteQuorum	int32			`json:"bkWriteQuorum"`
+	*k8s.Config
 }
 
 // BrokersCfg monitors all brokers in the cluster

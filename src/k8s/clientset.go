@@ -30,7 +30,6 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/pulsar-heartbeat/src/cfg"
 	"github.com/datastax/pulsar-heartbeat/src/util"
 	"os"
 	"path/filepath"
@@ -86,12 +85,34 @@ const (
 	PartialReady
 )
 
+type Config struct {
+	PulsarNamespace 	string		`json:"pulsarNamespace"`
+	BrokerStsLabel		string		`json:"brokerStsLabel"`
+	BrokerDepLabel		string		`json:"brokerDepLabel"`
+	ProxyDepLabel		string		`json:"proxyDepLabel"`
+	ZookeeperLabel		string		`json:"zookeeperLabel"`
+	BookkeeperLabel		string		`json:"bookkeeperLabel"`
+	BkWriteQuorum		int32		`json:"bkWriteQuorum"`
+}
+
+func (c *Config) sanitize () {
+	c.PulsarNamespace = util.AssignString(c.PulsarNamespace, DefaultPulsarNamespace)
+	c.BrokerStsLabel = util.AssignString(c.BrokerStsLabel, BrokerSts)
+	c.BrokerDepLabel = util.AssignString(c.BrokerDepLabel, BrokerDeployment)
+	c.ProxyDepLabel = util.AssignString(c.ProxyDepLabel, ProxyDeployment)
+	c.ZookeeperLabel = util.AssignString(c.ZookeeperLabel, ZookeeperSts)
+	c.BookkeeperLabel = util.AssignString(c.BookkeeperLabel, BookkeeperSts)
+
+	if c.BkWriteQuorum <= 0 {
+		c.BkWriteQuorum = 2
+	}
+}
+
 // Client is the k8s client object
 type Client struct {
 	Clientset        *kubernetes.Clientset
 	Metrics          *metrics.Clientset
 	ClusterName      string
-	DefaultNamespace string
 	Status           ClusterStatusCode
 	Zookeeper        StatefulSet
 	Bookkeeper       StatefulSet
@@ -99,7 +120,7 @@ type Client struct {
 	Broker           Deployment
 	Proxy            Deployment
 	FunctionWorker   StatefulSet
-	BkWriteQuorum	 int32
+	*Config
 }
 
 // ClusterStatus is the health status of the cluster and its components
@@ -127,21 +148,21 @@ type StatefulSet struct {
 }
 
 // GetK8sClient gets k8s clientset
-func GetK8sClient(k8sCfg cfg.K8sClusterCfg) (*Client, error) {
+func GetK8sClient(k8sCfg Config) (*Client, error) {
 	var config *rest.Config
-	ns := util.AssignString(k8sCfg.PulsarNamespace, DefaultPulsarNamespace)
+	k8sCfg.sanitize()
 
 	if home := homedir.HomeDir(); home != "" {
 		// TODO: add configuration to allow customized config file
 		kubeconfig := filepath.Join(home, ".kube", "config")
 		if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
-			log.Infof("this is an in-cluster k8s monitor, pulsar namespace %s", ns)
+			log.Infof("this is an in-cluster k8s monitor, pulsar namespace %s", k8sCfg.PulsarNamespace)
 			if config, err = rest.InClusterConfig(); err != nil {
 				return nil, err
 			}
 
 		} else {
-			log.Infof("this is outside of k8s cluster monitor, kubeconfig dir %s, pulsar namespace %s", kubeconfig, ns)
+			log.Infof("this is outside of k8s cluster monitor, kubeconfig dir %s, pulsar namespace %s", kubeconfig, k8sCfg.PulsarNamespace)
 			if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
 				return nil, err
 			}
@@ -158,19 +179,13 @@ func GetK8sClient(k8sCfg cfg.K8sClusterCfg) (*Client, error) {
 		return nil, err
 	}
 
-	var bkWriteQ int32
-	if k8sCfg.BkWriteQuorum > 0 {
-		bkWriteQ = k8sCfg.BkWriteQuorum
-	} else {
-		bkWriteQ = 2
-	}
 	client := Client{
 		Clientset: clientset,
 		Metrics:   metrics,
-		BkWriteQuorum: bkWriteQ,
+		Config: &k8sCfg,
 	}
 
-	err = client.UpdateReplicas(ns, k8sCfg)
+	err = client.UpdateReplicas()
 	if err != nil {
 		return nil, err
 	}
@@ -192,9 +207,8 @@ func buildInClusterConfig() kubernetes.Interface {
 }
 
 // UpdateReplicas updates the replicas for deployments and sts
-func (c *Client) UpdateReplicas(namespace string, k8sCfg cfg.K8sClusterCfg) error {
-	brokerStsLabel := util.AssignString(k8sCfg.BrokerStsLabel, BrokerSts)
-	brokersts, err := c.getStatefulSets(namespace, brokerStsLabel)
+func (c *Client) UpdateReplicas() error {
+	brokersts, err := c.getStatefulSets(c.PulsarNamespace, c.BrokerStsLabel)
 	if err != nil {
 		return err
 	}
@@ -204,8 +218,7 @@ func (c *Client) UpdateReplicas(namespace string, k8sCfg cfg.K8sClusterCfg) erro
 		c.BrokerSts.Replicas = *(brokersts.Items[0]).Spec.Replicas
 	}
 
-	brokerDepLabel := util.AssignString(k8sCfg.BrokerDepLabel, BrokerDeployment)
-	broker, err := c.getDeployments(namespace, brokerDepLabel)
+	broker, err := c.getDeployments(c.PulsarNamespace, c.BrokerDepLabel)
 	if err != nil {
 		return err
 	}
@@ -215,8 +228,7 @@ func (c *Client) UpdateReplicas(namespace string, k8sCfg cfg.K8sClusterCfg) erro
 		c.Broker.Replicas = *(broker.Items[0]).Spec.Replicas
 	}
 
-	proxyDepLabel := util.AssignString(k8sCfg.ProxyDepLabel, ProxyDeployment)
-	proxy, err := c.getDeployments(namespace, proxyDepLabel)
+	proxy, err := c.getDeployments(c.PulsarNamespace, c.ProxyDepLabel)
 	if err != nil {
 		return err
 	}
@@ -226,15 +238,13 @@ func (c *Client) UpdateReplicas(namespace string, k8sCfg cfg.K8sClusterCfg) erro
 		c.Proxy.Replicas = *(proxy.Items[0]).Spec.Replicas
 	}
 
-	zkLabel := util.AssignString(k8sCfg.ZookeeperLabel, ZookeeperSts)
-	zk, err := c.getStatefulSets(namespace, zkLabel)
+	zk, err := c.getStatefulSets(c.PulsarNamespace, c.ZookeeperLabel)
 	if err != nil {
 		return err
 	}
 	c.Zookeeper.Replicas = *(zk.Items[0]).Spec.Replicas
 
-	bkLabel := util.AssignString(k8sCfg.BookkeeperLabel, BookkeeperSts)
-	bk, err := c.getStatefulSets(namespace, bkLabel)
+	bk, err := c.getStatefulSets(c.PulsarNamespace, c.BookkeeperLabel)
 	if err != nil {
 		return err
 	}
@@ -244,25 +254,22 @@ func (c *Client) UpdateReplicas(namespace string, k8sCfg cfg.K8sClusterCfg) erro
 }
 
 // WatchPods watches the running pods vs intended replicas
-func (c *Client) WatchPods(namespace string, k8sCfg cfg.K8sClusterCfg) error {
+func (c *Client) WatchPods() error {
 
-	zkLabel := util.AssignString(k8sCfg.ZookeeperLabel, ZookeeperSts)
-	if counts, err := c.runningPodCounts(namespace, zkLabel); err == nil {
+	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ZookeeperLabel); err == nil {
 		c.Zookeeper.Instances = int32(counts)
 	} else {
 		return err
 	}
 
-	bkLabel := util.AssignString(k8sCfg.BookkeeperLabel, BookkeeperSts)
-	if counts, err := c.runningPodCounts(namespace, bkLabel); err == nil {
+	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BookkeeperLabel); err == nil {
 		c.Bookkeeper.Instances = int32(counts)
 	} else {
 		return err
 	}
 
 	if c.Broker.Replicas > 0 {
-		brokerDepLabel := util.AssignString(k8sCfg.BrokerDepLabel, BrokerDeployment)
-		if counts, err := c.runningPodCounts(namespace, brokerDepLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerDepLabel); err == nil {
 			c.Broker.Instances = int32(counts)
 		} else {
 			return err
@@ -270,8 +277,7 @@ func (c *Client) WatchPods(namespace string, k8sCfg cfg.K8sClusterCfg) error {
 	}
 
 	if c.BrokerSts.Replicas > 0 {
-		brokerStsLabel := util.AssignString(k8sCfg.BrokerStsLabel, BrokerSts)
-		if counts, err := c.runningPodCounts(namespace, brokerStsLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerStsLabel); err == nil {
 			c.BrokerSts.Instances = int32(counts)
 		} else {
 			return err
@@ -279,8 +285,7 @@ func (c *Client) WatchPods(namespace string, k8sCfg cfg.K8sClusterCfg) error {
 	}
 
 	if c.Proxy.Replicas > 0 {
-		proxyDepLabel := util.AssignString(k8sCfg.ProxyDepLabel, ProxyDeployment)
-		if counts, err := c.runningPodCounts(namespace, proxyDepLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ProxyDepLabel); err == nil {
 			c.Proxy.Instances = int32(counts)
 		} else {
 			return err
