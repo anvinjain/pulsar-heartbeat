@@ -1,0 +1,16 @@
+FROM golang:1.16.7-stretch
+ARG user=pulsar
+ARG group=pulsar
+ARG uid=1000
+ARG gid=116
+
+RUN groupadd --gid ${gid} ${group}
+RUN useradd --uid ${uid} -g ${group} ${user}
+
+COPY ./pulsar-heartbeat/src/pulsar-heartbeat /usr/share/pulsar-heartbeat
+
+RUN chown -R ${user}:${group} /usr/share/
+USER ${user}
+
+ENV PULSAR_OPS_MONITOR_CFG=/config/runtime.yml
+ENTRYPOINT /usr/share/pulsar-heartbeat
