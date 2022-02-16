@@ -123,6 +123,7 @@ type TopicCfg struct {
 	NumOfMessages           int            `json:"numberOfMessages"`
 	AlertPolicy             AlertPolicyCfg `json:"AlertPolicy"`
 	DowntimeTrackerDisabled bool           `json:"downtimeTrackerDisabled"`
+	BrokerCheckDisabled		bool		   `json:"brokerCheckDisabled"`
 }
 
 // WsConfig is configuration to monitor WebSocket pub sub latency

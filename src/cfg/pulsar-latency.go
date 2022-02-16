@@ -249,7 +249,9 @@ func TopicLatencyTestThread() {
 			for {
 				select {
 				case <-ticker.C:
-					go TestBrokers(t)
+					if !t.BrokerCheckDisabled {
+						go TestBrokers(t)
+					}
 					TestTopicLatency(t)
 				}
 			}
@@ -348,7 +350,7 @@ func testPartitionTopic(clusterName string, tokenSupplier func()(string,error), 
 	pulsarClient, err := GetPulsarClient(cfg.PulsarURL, tokenSupplier)
 	if err != nil {
 		errMsg := fmt.Sprintf("cluster %s, %s failed create Pulsar Client with error: %v", component, testName, err)
-		Alert(errMsg)
+		//Alert(errMsg)
 		ReportIncident(component, component, "partition topic test failure", errMsg, &cfg.AlertPolicy)
 		return
 	}
@@ -356,7 +358,7 @@ func testPartitionTopic(clusterName string, tokenSupplier func()(string,error), 
 	latency, err := pt.TestPartitionTopic(pulsarClient)
 	if err != nil {
 		errMsg := fmt.Sprintf("cluster %s, %s partition topic test failed with Pulsar error: %v", component, testName, err)
-		Alert(errMsg)
+		//Alert(errMsg)
 		ReportIncident(component, component, "partition topic test failure", errMsg, &cfg.AlertPolicy)
 		return
 	}
@@ -364,7 +366,7 @@ func testPartitionTopic(clusterName string, tokenSupplier func()(string,error), 
 	if latency > expectedLatency || latency == 0 {
 		errMsg := fmt.Sprintf("cluster %s, partition topic test message latency %v over the budget %v",
 			component, latency, expectedLatency)
-		Alert(errMsg)
+		//Alert(errMsg)
 		ReportIncident(component, component, "partition topic test has over budget latency", errMsg, &cfg.AlertPolicy)
 	} else {
 		log.Infof("%d partition topics test successfully passed with latency %v", pt.NumberOfPartitions, latency)
