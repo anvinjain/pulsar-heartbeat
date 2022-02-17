@@ -5,12 +5,15 @@ ARG uid=1000
 ARG gid=116
 
 RUN groupadd --gid ${gid} ${group}
-RUN useradd --uid ${uid} -g ${group} ${user}
+RUN useradd --uid ${uid} -g ${group} -m ${user}
 
-COPY ./pulsar-heartbeat/src/pulsar-heartbeat /usr/share/pulsar-heartbeat
+COPY src/pulsar-heartbeat /home/${user}
+RUN go get github.com/google/gops
+RUN cp /go/bin/gops /home/${user}/gops
 
-RUN chown -R ${user}:${group} /usr/share/
+RUN chown -R ${user}:${group} /home/${user}
+WORKDIR /home/${user}
 USER ${user}
-
 ENV PULSAR_OPS_MONITOR_CFG=/config/runtime.yml
-ENTRYPOINT /usr/share/pulsar-heartbeat
+
+ENTRYPOINT ./pulsar-heartbeat
