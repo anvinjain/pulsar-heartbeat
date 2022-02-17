@@ -86,22 +86,25 @@ const (
 )
 
 type Config struct {
-	PulsarNamespace 	string		`json:"pulsarNamespace"`
-	BrokerStsLabel		string		`json:"brokerStsLabel"`
-	BrokerDepLabel		string		`json:"brokerDepLabel"`
-	ProxyDepLabel		string		`json:"proxyDepLabel"`
-	ZookeeperLabel		string		`json:"zookeeperLabel"`
-	BookkeeperLabel		string		`json:"bookkeeperLabel"`
-	BkWriteQuorum		int32		`json:"bkWriteQuorum"`
+	PulsarNamespace 		string		`json:"pulsarNamespace"`
+	BrokerStsSelector		string		`json:"brokerStsSelector"`
+	BrokerDepSelector		string		`json:"brokerDepSelector"`
+	ProxyDepSelector		string		`json:"proxyDepSelector"`
+	BookkeeperSelector		string		`json:"bookkeeperSelector"`
+	ZookeeperSelector		string		`json:"zookeeperSelector"`
+	ConfigStoreSelector		string		`json:"configStoreSelector"`
+	BkWriteQuorum			int32		`json:"bkWriteQuorum"`
 }
 
 func (c *Config) sanitize () {
 	c.PulsarNamespace = util.AssignString(c.PulsarNamespace, DefaultPulsarNamespace)
-	c.BrokerStsLabel = util.AssignString(c.BrokerStsLabel, BrokerSts)
-	c.BrokerDepLabel = util.AssignString(c.BrokerDepLabel, BrokerDeployment)
-	c.ProxyDepLabel = util.AssignString(c.ProxyDepLabel, ProxyDeployment)
-	c.ZookeeperLabel = util.AssignString(c.ZookeeperLabel, ZookeeperSts)
-	c.BookkeeperLabel = util.AssignString(c.BookkeeperLabel, BookkeeperSts)
+
+	c.BrokerStsSelector = util.AssignString(c.BrokerStsSelector, fmt.Sprintf("component=%s", BrokerSts))
+	c.BrokerDepSelector = util.AssignString(c.BrokerDepSelector, fmt.Sprintf("component=%s", BrokerDeployment))
+	c.ProxyDepSelector = util.AssignString(c.ProxyDepSelector, fmt.Sprintf("component=%s", ProxyDeployment))
+	c.BookkeeperSelector = util.AssignString(c.BookkeeperSelector, fmt.Sprintf("component=%s", BookkeeperSts))
+	c.ZookeeperSelector = util.AssignString(c.ZookeeperSelector, fmt.Sprintf("component=%s", ZookeeperSts))
+	c.ConfigStoreSelector = util.AssignString(c.ConfigStoreSelector, fmt.Sprintf("component=%s", "global-zookeeper"))
 
 	if c.BkWriteQuorum <= 0 {
 		c.BkWriteQuorum = 2
@@ -120,6 +123,7 @@ type Client struct {
 	Broker           Deployment
 	Proxy            Deployment
 	FunctionWorker   StatefulSet
+	ConfigStore      StatefulSet
 	*Config
 }
 
@@ -130,6 +134,7 @@ type ClusterStatus struct {
 	BrokerOfflineInstances     int
 	BrokerStsOfflineInstances  int
 	ProxyOfflineInstances      int
+	ConfigStoreInstances	   int
 	Status                     ClusterStatusCode
 }
 
@@ -208,7 +213,7 @@ func buildInClusterConfig() kubernetes.Interface {
 
 // UpdateReplicas updates the replicas for deployments and sts
 func (c *Client) UpdateReplicas() error {
-	brokersts, err := c.getStatefulSets(c.PulsarNamespace, c.BrokerStsLabel)
+	brokersts, err := c.getStatefulSets(c.PulsarNamespace, c.BrokerStsSelector)
 	if err != nil {
 		return err
 	}
@@ -218,7 +223,7 @@ func (c *Client) UpdateReplicas() error {
 		c.BrokerSts.Replicas = *(brokersts.Items[0]).Spec.Replicas
 	}
 
-	broker, err := c.getDeployments(c.PulsarNamespace, c.BrokerDepLabel)
+	broker, err := c.getDeployments(c.PulsarNamespace, c.BrokerDepSelector)
 	if err != nil {
 		return err
 	}
@@ -228,7 +233,7 @@ func (c *Client) UpdateReplicas() error {
 		c.Broker.Replicas = *(broker.Items[0]).Spec.Replicas
 	}
 
-	proxy, err := c.getDeployments(c.PulsarNamespace, c.ProxyDepLabel)
+	proxy, err := c.getDeployments(c.PulsarNamespace, c.ProxyDepSelector)
 	if err != nil {
 		return err
 	}
@@ -238,38 +243,47 @@ func (c *Client) UpdateReplicas() error {
 		c.Proxy.Replicas = *(proxy.Items[0]).Spec.Replicas
 	}
 
-	zk, err := c.getStatefulSets(c.PulsarNamespace, c.ZookeeperLabel)
+	zk, err := c.getStatefulSets(c.PulsarNamespace, c.ZookeeperSelector)
 	if err != nil {
 		return err
 	}
 	c.Zookeeper.Replicas = *(zk.Items[0]).Spec.Replicas
 
-	bk, err := c.getStatefulSets(c.PulsarNamespace, c.BookkeeperLabel)
+	bk, err := c.getStatefulSets(c.PulsarNamespace, c.BookkeeperSelector)
 	if err != nil {
 		return err
 	}
 	c.Bookkeeper.Replicas = *(bk.Items[0]).Spec.Replicas
+
+	cfgStore, err := c.getStatefulSets(c.PulsarNamespace, c.ConfigStoreSelector)
+	if err != nil {
+		return err
+	}
+	if len(cfgStore.Items) == 0 {
+		c.ConfigStore.Replicas = 0
+	} else {
+		c.ConfigStore.Replicas = *(cfgStore.Items[0]).Spec.Replicas
+	}
 
 	return nil
 }
 
 // WatchPods watches the running pods vs intended replicas
 func (c *Client) WatchPods() error {
-
-	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ZookeeperLabel); err == nil {
+	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ZookeeperSelector); err == nil {
 		c.Zookeeper.Instances = int32(counts)
 	} else {
 		return err
 	}
 
-	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BookkeeperLabel); err == nil {
+	if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BookkeeperSelector); err == nil {
 		c.Bookkeeper.Instances = int32(counts)
 	} else {
 		return err
 	}
 
 	if c.Broker.Replicas > 0 {
-		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerDepLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerDepSelector); err == nil {
 			c.Broker.Instances = int32(counts)
 		} else {
 			return err
@@ -277,7 +291,7 @@ func (c *Client) WatchPods() error {
 	}
 
 	if c.BrokerSts.Replicas > 0 {
-		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerStsLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.BrokerStsSelector); err == nil {
 			c.BrokerSts.Instances = int32(counts)
 		} else {
 			return err
@@ -285,10 +299,16 @@ func (c *Client) WatchPods() error {
 	}
 
 	if c.Proxy.Replicas > 0 {
-		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ProxyDepLabel); err == nil {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ProxyDepSelector); err == nil {
 			c.Proxy.Instances = int32(counts)
 		} else {
 			return err
+		}
+	}
+
+	if c.ConfigStore.Replicas > 0 {
+		if counts, err := c.runningPodCounts(c.PulsarNamespace, c.ConfigStoreSelector); err == nil {
+			c.ConfigStore.Instances = int32(counts)
 		}
 	}
 	return nil
@@ -303,8 +323,10 @@ func (c *Client) EvalHealth() (string, ClusterStatus) {
 		BrokerOfflineInstances:     int(c.Broker.Replicas - c.Broker.Instances),
 		BrokerStsOfflineInstances:  int(c.BrokerSts.Replicas - c.BrokerSts.Instances),
 		ProxyOfflineInstances:      int(c.Proxy.Replicas - c.Proxy.Instances),
+		ConfigStoreInstances:  		int(c.ConfigStore.Replicas - c.ConfigStore.Instances),
 		Status:                     OK,
 	}
+
 	if c.Zookeeper.Instances <= (c.Zookeeper.Replicas / 2) {
 		health = fmt.Sprintf("\nCluster error - zookeeper is running %d instances out of %d replicas", c.Zookeeper.Instances, c.Zookeeper.Replicas)
 		status.Status = TotalDown
@@ -344,6 +366,15 @@ func (c *Client) EvalHealth() (string, ClusterStatus) {
 		health = health + fmt.Sprintf("\nCluster warning - proxy is running %d instances out of %d", c.Proxy.Instances, c.Proxy.Replicas)
 		status.Status = updateStatus(status.Status, PartialReady)
 	}
+
+	if c.ConfigStore.Replicas > 0 && c.ConfigStore.Instances <= (c.ConfigStore.Replicas / 2) {
+		health = fmt.Sprintf("\nCluster error - config store is running %d instances out of %d replicas", c.ConfigStore.Instances, c.ConfigStore.Replicas)
+		status.Status = TotalDown
+	} else if c.ConfigStore.Replicas > 0 && c.ConfigStore.Instances < c.ConfigStore.Replicas {
+		health = fmt.Sprintf("\nCluster warning - config store is running %d instances out of %d", c.ConfigStore.Instances, c.ConfigStore.Replicas)
+		status.Status = PartialReady
+	}
+
 	c.Status = status.Status
 	return health, status
 }
@@ -358,9 +389,9 @@ func updateStatus(original, current ClusterStatusCode) ClusterStatusCode {
 }
 
 // WatchPodResource watches pod's resource
-func (c *Client) WatchPodResource(namespace, component string) error {
+func (c *Client) WatchPodResource(namespace, selector string) error {
 	podMetrics, err := c.Metrics.MetricsV1beta1().PodMetricses(namespace).List(context.TODO(), meta_v1.ListOptions{
-		LabelSelector: fmt.Sprintf("component=%s", component),
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return err
@@ -379,9 +410,9 @@ func (c *Client) WatchPodResource(namespace, component string) error {
 	return nil
 }
 
-func (c *Client) runningPodCounts(namespace, component string) (int, error) {
+func (c *Client) runningPodCounts(namespace, selector string) (int, error) {
 	pods, err := c.Clientset.CoreV1().Pods(namespace).List(context.TODO(), meta_v1.ListOptions{
-		LabelSelector: fmt.Sprintf("component=%s", component),
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return -1, err
@@ -425,19 +456,19 @@ func (c *Client) GetNodeResource() {
 	}
 }
 
-func (c *Client) getDeployments(namespace, component string) (*v1.DeploymentList, error) {
+func (c *Client) getDeployments(namespace, selector string) (*v1.DeploymentList, error) {
 	deploymentsClient := c.Clientset.AppsV1().Deployments(namespace)
 
 	return deploymentsClient.List(context.TODO(), meta_v1.ListOptions{
-		LabelSelector: fmt.Sprintf("component=%s", component),
+		LabelSelector: selector,
 	})
 }
 
-func (c *Client) getStatefulSets(namespace, component string) (*v1.StatefulSetList, error) {
+func (c *Client) getStatefulSets(namespace, selector string) (*v1.StatefulSetList, error) {
 	stsClient := c.Clientset.AppsV1().StatefulSets(namespace)
 
 	return stsClient.List(context.TODO(), meta_v1.ListOptions{
-		LabelSelector: fmt.Sprintf("component=%s", component),
+		LabelSelector: selector,
 	})
 }
 
