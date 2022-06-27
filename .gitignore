@@ -18,3 +18,7 @@
 runtime.yml
 runtime.json
 runtime.yaml
+
+.idea
+src/pkg/mod
+src/pulsar-heartbeat
