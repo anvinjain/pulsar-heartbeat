@@ -19,6 +19,9 @@ runtime.yml
 runtime.json
 runtime.yaml
 
+# ignore build artifacts
+bin
+
 .idea
 src/pkg/mod
 src/pulsar-heartbeat
