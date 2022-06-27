@@ -23,12 +23,15 @@ package cfg
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io/ioutil"
 	"os"
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/datastax/pulsar-heartbeat/src/util"
 
@@ -151,9 +154,10 @@ type K8sClusterCfg struct {
 
 // BrokersCfg monitors all brokers in the cluster
 type BrokersCfg struct {
-	InClusterRESTURL string         `json:"inclusterRestURL"`
-	IntervalSeconds  int            `json:"intervalSeconds"`
-	AlertPolicy      AlertPolicyCfg `json:"AlertPolicy"`
+	BrokerTestRequired bool           `json:"brokerTestRequired"`
+	InClusterRESTURL   string         `json:"inclusterRestURL"`
+	IntervalSeconds    int            `json:"intervalSeconds"`
+	AlertPolicy        AlertPolicyCfg `json:"AlertPolicy"`
 }
 
 // TenantUsageCfg tenant usage reporting and monitoring
@@ -167,7 +171,8 @@ type Configuration struct {
 	// Name is the Pulsar cluster name, it is mandatory
 	Name string `json:"name"`
 	// ClusterName is the Pulsar cluster name if the Name cannot be used as the Pulsar cluster name, optional
-	ClusterName string `json:"clusterName"`
+	ClusterName      string                    `json:"clusterName"`
+	TokenOAuthConfig *clientcredentials.Config `json:"tokenOAuthConfig"`
 	// TokenFilePath is the file path to Pulsar JWT. It takes precedence of the token attribute.
 	TokenFilePath string `json:"tokenFilePath"`
 	// Token is a Pulsar JWT can be used for both client client or http admin client
@@ -185,6 +190,45 @@ type Configuration struct {
 	SitesConfig       SitesCfg           `json:"sitesConfig"`
 	WebSocketConfig   []WsConfig         `json:"webSocketConfig"`
 	TenantUsageConfig TenantUsageCfg     `json:"tenantUsageConfig"`
+
+	tokenFunc func() (string, error)
+}
+
+func (c *Configuration) Init() {
+	if len(c.Name) < 1 {
+		panic("a valid `name` in Configuration must be specified")
+	}
+
+	// reconcile the JWT
+	if len(c.TokenFilePath) > 1 {
+		tokenBytes, err := ioutil.ReadFile(c.TokenFilePath)
+		if err != nil {
+			log.Errorf("failed to read Pulsar JWT from a file %s", c.TokenFilePath)
+		} else {
+			log.Infof("read Pulsar token from the file %s", c.TokenFilePath)
+			c.Token = string(tokenBytes)
+		}
+	}
+	c.Token = strings.TrimSuffix(util.AssignString(c.Token, os.Getenv("PulsarToken")), "\n")
+
+	if c.TokenOAuthConfig != nil {
+		tokenSrc := c.TokenOAuthConfig.TokenSource(context.Background())
+		c.tokenFunc = func() (string, error) {
+			ot, err := tokenSrc.Token()
+			if err != nil {
+				return "", err
+			}
+			return ot.AccessToken, nil
+		}
+	} else if c.Token != "" {
+		c.tokenFunc = func() (string, error) {
+			return c.Token, nil
+		}
+	}
+}
+
+func (c *Configuration) TokenSupplier() func() (string, error) {
+	return c.tokenFunc
 }
 
 // AlertPolicyCfg is a set of criteria to evaluation triggers for incident alert
@@ -219,23 +263,7 @@ func ReadConfigFile(configFile string) {
 			panic(err)
 		}
 	}
-
-	if len(Config.Name) < 1 {
-		panic("a valid `name` in Configuration must be specified")
-	}
-
-	// reconcile the JWT
-	if len(Config.TokenFilePath) > 1 {
-		tokenBytes, err := ioutil.ReadFile(Config.TokenFilePath)
-		if err != nil {
-			log.Errorf("failed to read Pulsar JWT from a file %s", Config.TokenFilePath)
-		} else {
-			log.Infof("read Pulsar token from the file %s", Config.TokenFilePath)
-			Config.Token = string(tokenBytes)
-		}
-	}
-	Config.Token = strings.TrimSuffix(util.AssignString(Config.Token, os.Getenv("PulsarToken")), "\n")
-
+	Config.Init()
 	log.Infof("config %v", Config)
 }
 

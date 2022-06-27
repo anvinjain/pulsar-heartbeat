@@ -22,6 +22,8 @@
 package cfg
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -36,20 +38,44 @@ import (
 
 // PulsarAdminTenant probes the tenant endpoint to get a list of tenants
 // returns the number of tenants on the cluster
-func PulsarAdminTenant(clusterURL, token string) (int, error) {
+func PulsarAdminTenant(clusterURL string, tokenSupplier func()(string,error)) (int, error) {
 
 	client := retryablehttp.NewClient()
-	client.HTTPClient.Timeout = time.Duration(10) * time.Second
 	client.RetryWaitMin = 4 * time.Second
 	client.RetryWaitMax = 64 * time.Second
 	client.RetryMax = 2
+	caCertFile := GetConfig().TrustStore
+	if caCertFile != "" {
+		caCert, err := ioutil.ReadFile(caCertFile)
+		if err != nil {
+			return 0, fmt.Errorf("error opening cert file %s, Error: %v", caCertFile, err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+
+		t := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs: caCertPool,
+			},
+		}
+		client.HTTPClient = &http.Client{
+			Transport: t,
+		}
+	}
+	client.HTTPClient.Timeout = time.Duration(30) * time.Second
 
 	req, err := retryablehttp.NewRequest(http.MethodGet, clusterURL, nil)
 	if err != nil {
 		return 0, err
 	}
 
-	req.Header.Add("Authorization", "Bearer "+token)
+	if tokenSupplier != nil {
+		token, err := tokenSupplier()
+		if err != nil {
+			return 0, err
+		}
+		req.Header.Add("Authorization", "Bearer "+token)
+	}
 
 	resp, err := client.Do(req)
 	if resp != nil {
@@ -77,7 +103,7 @@ func PulsarAdminTenant(clusterURL, token string) (int, error) {
 // PulsarTenants get a list of tenants on each cluster
 func PulsarTenants() {
 	clusters := GetConfig().PulsarAdminConfig.Clusters
-	token := util.AssignString(GetConfig().PulsarAdminConfig.Token, GetConfig().Token)
+	tokenSupplier := util.TokenSupplierWithOverride(GetConfig().PulsarAdminConfig.Token, GetConfig().TokenSupplier())
 
 	for _, cluster := range clusters {
 		adminURL, err := url.ParseRequestURI(cluster.URL)
@@ -86,7 +112,7 @@ func PulsarTenants() {
 		}
 		clusterName := adminURL.Hostname()
 		queryURL := util.SingleSlashJoin(cluster.URL, "/admin/v2/tenants")
-		tenantSize, err := PulsarAdminTenant(queryURL, token)
+		tenantSize, err := PulsarAdminTenant(queryURL, tokenSupplier)
 		if err != nil {
 			errMsg := fmt.Sprintf("tenant-test failed on cluster %s error: %v", queryURL, err)
 			log.Errorf(clusterName + "-pulsar-admin " + errMsg)
